@@ -1,3 +1,3 @@
 # lord-of-the-rings-visualization
 
-<img src="readme/logo.png"/>
+<img src="readme/description.png"/>

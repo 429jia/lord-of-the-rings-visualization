@@ -1,0 +1,656 @@
+<!DOCTYPE html>
+<meta charset="utf-8">
+<style>
+  html {
+    margin: 30px;
+  }
+
+  h1 {
+    font-family: cursive;
+    font-size: 28px;
+    color: #423127;
+    position: absolute;
+    font-weight: bolder;
+  }
+
+  body {
+    font: 10px sans-serif;
+  }
+
+  img {
+    width: 100px;
+  }
+
+  #header {
+    position: relative;
+    width: 600px;
+    display: block;
+    margin-left: 350px;
+    margin-right: auto;
+    float: middle;
+  }
+
+  .group-tick line {
+    stroke: #000;
+  }
+
+  .ribbons {
+    fill-opacity: 0.67;
+  }
+
+  div#main {
+    position: relative;
+  }
+
+  div.tooltip1 {
+    position: absolute;
+    text-align: center;
+    padding: 5px 20px;
+    font-size: 16px;
+    font-family: Arial;
+    background: #f2f2f2;
+    border: 0px;
+    border-radius: 8px;
+    pointer-events: none;
+  }
+
+  div.tooltip2 {
+    position: absolute;
+    text-align: left;
+    width: 500px;
+    height: 500px;
+    padding: 2px;
+    font-size: 16px;
+    font-family: Arial;
+    border: 0px;
+    border-radius: 8px;
+    pointer-events: none;
+  }
+
+  fieldset {
+    width: 550px;
+  }
+
+  legend {
+    text-align: center;
+    font-size: 20px;
+    font-family: cursive;
+    color: #423127;
+  }
+
+  li {
+    margin: 8px;
+    list-style: none;
+    font-size: 18px;
+    font-family: Monospace;
+  }
+</style>
+
+<body></body>
+<script src="https://d3js.org/d3.v4.min.js"></script>
+<script src="./external_scripts/chordindex.js"></script>
+<script src="./external_scripts/ribbonindex.js"></script>
+<img id="header" src="./images/header.png" alt="header" />
+
+<script>
+  var colors = [
+    '#9C6744', '#C9BEB9', '#CFA07E', '#C4BAA1', '#C2B6BF', '#121212', '#8FB5AA', '#85889E', '#9C7989', '#91919C'
+  ]
+  var color;
+  var arcColors = [];
+  var points;
+  var matrix;
+  var characters;
+  var movies;
+  var words;
+  var movieIndexByName;
+  var characterIndexByName;
+  var races;
+  var pack;
+  var chord;
+  var arc;
+  var ribbon;
+  var rOuterScale;
+  var rInnerScale;
+  var opacityScale;
+  var width = 1366,
+    height = 700
+  outerRadius = Math.min(width, height) * 0.5 - 10,
+    innerRadius = outerRadius - 30,
+    insideRadius = width * 0.5,
+    paddingCircle = 30
+  paddingArc = 0.01
+  var movieIntro = [
+    "The Lord of the Rings I - The Fellowship of the Ring (2001)",
+    "The Lord of the Rings II - The Two Towers (2002)",
+    "The Lord of the Rings III - The Return of the King (2003)"
+  ]
+  var div = d3.select("body").append("div")
+    .attr("id", "main")
+  // small div for hover effects on the chords
+  var div1 = d3.select("body").append("div")
+    .attr("class", "tooltip1")
+    .style("opacity", 0);
+  // big div for hover effects
+  var div2 = d3.select("#main").append("div")
+    .attr("class", "tooltip2")
+    .style("opacity", 0)
+    .style("left", "720px")
+    .style("top", "100px");
+  // title
+  var title = d3.select("#main").append("h1")
+    .html("Which Roles & Races does The Lord of the Rings series Favor Most?")
+    .attr("class", "tooltip2")
+    .style("left", "600px")
+    .style("top", "0px")
+    .style("font-family", "cursive");
+
+
+  /* function for the main visualization */
+  function parseMovieRaw(d, i) {
+    return {
+      Name: d.Name,
+      runtime: Number(d.RuntimeInMinutes),
+      budget: Number(d.BudgetInMillions),
+      boxRevenue: Number(d.BoxOfficeRevenueInMillions),
+      nominations: Number(d.AcademyAwardNominations),
+      wins: Number(d.AcademyAwardWins),
+      score: Number(d.RottenTomatoesScore),
+    };
+  }
+  d3.queue()
+    .defer(d3.csv, "./data/Characters.csv")
+    .defer(d3.csv, "./data/Movies.csv", parseMovieRaw)
+    .defer(d3.csv, "./data/WordsByCharacter.csv")
+    .await(callback)
+
+  /* call back function for the main visualization */
+  function callback(err, rawCharacters, rawMovies, wordsByCharacter) {
+    processData(rawCharacters, rawMovies, wordsByCharacter);
+    var svg = d3.select("#main")
+      .append("svg")
+      .attr('width', width)
+      .attr('height', height)
+    var group = svg.append('g')
+      .attr("transform", "translate(" + height / 2 + "," + height / 2 + ")")
+    prepareDrawing();
+    drawPaths(group);
+    drawcircles(group);
+    drawLegends(group);
+  }
+
+  /* prepare data */
+  function processData(rawCharacters, rawMovies, wordsByCharacter) {
+    movies = rawMovies.map(function(d, i) {
+      d.index = i;
+      return d
+    });
+    movieIndexByName = d3.map(movies, function(d) {
+      return d.Name
+    });
+    characters = d3.map(rawCharacters, function(d) {
+      return d.Character
+    });
+    races = rawCharacters
+      .map(function(d) {
+        return d.Race
+      })
+      .sort()
+      .filter(function(d, i, array) {
+        return !i || d != array[i - 1]
+      })
+    words = d3.nest()
+      .key(function(d) {
+        return d.Character
+      })
+      .rollup(function(v) {
+        var array = [0, 0, 0];
+        v.forEach(function(e) {
+          var index = movieIndexByName.get(e.Film).index;
+          array[index] = Number(e.Words);
+        })
+        return array;
+      })
+      .entries(wordsByCharacter)
+      .map(function(d) {
+        characters.get(d.key)
+        d.sum = d3.sum(d.value)
+        d.wordsList = d.value
+        d.Race = characters.get(d.key).Race;
+        return d
+      });
+    words.sort(function(a, b) {
+      return a.Race == b.Race ? b.sum - a.sum : a.Race.localeCompare(b.Race)
+    })
+    characterIndexByName = d3.map(words, function(d) {
+      return d.key
+    })
+    matrix = [];
+    words.forEach(function(word) {
+      matrix.push(word.value)
+    });
+  }
+
+  /* prepare for the bubbles */
+  function prepareDrawing() {
+    pack = d3.pack()
+      .size([insideRadius, insideRadius])
+      .padding(paddingCircle);
+    var root = d3.hierarchy({
+        children: movies
+      })
+      .sum(function(d) {
+        return d.boxRevenue * d.boxRevenue;
+      })
+    points = pack(root).leaves()
+    points.map(function(d, i) {
+      d.x = d.x - insideRadius / 2;
+      d.y = d.y - insideRadius / 2
+    })
+    chord = customeChord()
+      .padAngle(paddingArc)
+      .sortSubgroups(d3.descending);
+    arc = d3.arc()
+      .innerRadius(innerRadius)
+      .outerRadius(outerRadius);
+    ribbon = customeRibbon()
+      .radius(innerRadius);
+  }
+
+  /* draw center inner and outer circles */
+  function drawcircles(svg) {
+    var bubbles = svg.append("g")
+      .attr("class", "bubbles")
+      .selectAll(".bubble")
+      .data(points)
+      .enter().append("g")
+      // add hover effects for inner circles
+      .on("mouseover", function(d, i) {
+        circleMouseover(d, i);
+        displayFieldSet(i, 'movie')
+      })
+      .on("mouseout", function(d, i) {
+        circleMouseout(d, i);
+      });
+    // scale for outer circles according to box revenue
+    rOuterScale = d3.scalePow()
+      .exponent(2)
+      .domain([d3.min(movies, d => d.boxRevenue), d3.max(movies, d => d.boxRevenue)])
+      .range([60, 80]);
+    // scale for inner circles according to budget
+    rInnerScale = d3.scalePow()
+      .exponent(2)
+      .domain([d3.min(movies, d => d.budget), d3.max(movies, d => d.budget)])
+      .range([40, 45]);
+    // scale for opacity of outer circles according to number of awards
+    opacityScale = d3.scaleLinear()
+      .domain([d3.min(movies, d => d.wins), d3.max(movies, d => d.wins)])
+      .range([0.5, 0.8]);
+    // create the bubbles
+    bubbles.append("circle")
+      .attr("r", function(d) {
+        return rOuterScale(d.data.boxRevenue);
+      })
+      .attr("cx", function(d) {
+        return d.x;
+      })
+      .attr("cy", function(d) {
+        return d.y;
+      })
+      .style("fill", "#6F5148")
+      .style('opacity', function(d) {
+        return opacityScale(d.data.wins)
+      });
+    bubbles.append("circle")
+      .attr("r", function(d) {
+        return rInnerScale(d.data.budget);
+      })
+      .attr("cx", function(d) {
+        return d.x;
+      })
+      .attr("cy", function(d) {
+        return d.y - rOuterScale(d.data.boxRevenue) + rInnerScale(d.data.budget);
+      })
+      .style("fill", "#e8e8e8")
+      .style('opacity', 0.8)
+      // add hover effects for outer circles
+      .on("mouseover", function(d, i) {;
+        displayFieldSet(i, 'movie')
+      })
+      .on("mouseout", function(d) {});
+    bubbles.append("text")
+      .attr("x", function(d) {
+        return d.x;
+      })
+      .attr("y", function(d) {
+        return d.y - rOuterScale(d.data.boxRevenue) + rInnerScale(d.data.budget);
+      })
+      .attr("text-anchor", "middle")
+      .attr("font-size", "15pt")
+      .text(function(d, i) {
+        let seriesNum = "";
+        for (let count = 0; count < i + 1; count++) seriesNum += "I";
+        return seriesNum;
+      });
+  }
+
+  /* draw chord diagram */
+  function drawPaths(svg) {
+    color = d3.scaleOrdinal()
+      .domain(races)
+      .range(colors);
+    var g = svg.append("g")
+      .datum(chord(matrix, points));
+    var arcs = g.append("g")
+      .attr("class", "arcs")
+      .selectAll("g")
+      .data(function(chords) {
+        return chords.groups;
+      })
+      .enter();
+
+    arcs.append("path")
+      .style("fill", function(d) {
+        return color(words[d.index].Race);
+      })
+      .style("stroke", function(d) {
+        return color(words[d.index].Race);
+      })
+      .attr("opacity", 1)
+      .attr("d", arc)
+      // add hover effect for chord groups
+      .on("mouseover", function(d, i) {
+        groupMouseover(d, i)
+        displayTooltip(i, 0.9);
+        displayFieldSet(i, "character")
+      })
+      .on("mouseout", function(d, i) {
+        displayTooltip(i, 0);
+        groupMouseout(d, i)
+      })
+
+    var streams = g.append("g")
+      .attr("class", "ribbons")
+      .selectAll("path")
+      .data(function(chords) {
+        return chords;
+      })
+    streams.enter().append("path")
+      .style("fill", function(d) {
+        return color(words[d.source.index].Race);
+      })
+      .style("stroke", function(d) {
+        return color(words[d.source.index].Race);
+      })
+      .attr('opacity', 0.6)
+      .attr("d", ribbon)
+      // add hover effect for individual chords
+      .on("mouseover", function(d, i) {
+        chordMouseover(d, i)
+      })
+      .on("mouseout", function(d, i) {
+        chordMouseout(d, i)
+      })
+  }
+
+  /* draw legends */
+  function drawLegends(svg) {
+    var xloc = 370;
+    var yloc = 80;
+    // legends for races
+    var raceLegends = svg.append("g")
+      .selectAll("rect")
+      .data(races)
+      .enter();
+    raceLegends.append("rect")
+      .attr("x", function(d, i) {
+        return xloc;
+      })
+      .attr("y", function(d, i) {
+        return yloc + i * 25;
+      })
+      .attr("width", 10)
+      .attr("height", 10)
+      .style("fill", function(d, i) {
+        return color(races[i]);
+      })
+      .style('opacity', "0.9");
+    yloc = 90;
+    raceLegends.append("text")
+      .attr("x", function(d, i) {
+        return xloc + 30;
+      })
+      .attr("y", function(d, i) {
+        return yloc + i * 25;
+      })
+      .attr("text-anchor", "left")
+      .attr("font-size", "12pt")
+      .attr("font-family", "cursive")
+      .text(function(d) {
+        return d;
+      });
+    // legends for circles
+    xloc = 500
+    yloc = 100
+    var circleLegends = svg.append("g")
+      .selectAll("circle")
+      .data(movies)
+      .enter();
+    circleLegends.append("circle")
+      .attr("cx", function(d, i) {
+        return xloc + i * 30;
+      })
+      .attr("cy", function(d, i) {
+        return yloc;
+      })
+      .attr("r", function(d, i) {
+        return (i + 2) * 2.5;
+      })
+      .style("fill", "#6F5148")
+      .style('opacity', "1");
+    circleLegends.append("circle")
+      .attr("cx", function(d, i) {
+        return xloc + i * 30;
+      })
+      .attr("cy", function(d, i) {
+        return yloc + 80;
+      })
+      .attr("r", 10)
+      .style("fill", "#6F5148")
+      .style('opacity', function(d, i) {
+        return (i + 1) * 0.3;
+      });
+    circleLegends.append("circle")
+      .attr("cx", function(d, i) {
+        return xloc + i * 30;
+      })
+      .attr("cy", function(d, i) {
+        return yloc + 160;
+      })
+      .attr("r", function(d, i) {
+        return (i + 2) * 2.5;
+      })
+      .style("fill", "#e8e8e8")
+      .style('opacity', "1");
+
+    svg.append("text")
+      .attr("x", xloc - 10)
+      .attr("y", yloc + 36)
+      .attr("text-anchor", "left")
+      .attr("font-size", "12pt")
+      .attr("font-family", "cursive")
+      .text("Box Office Revenue in Millions (circle area)");
+    svg.append("text")
+      .attr("x", xloc - 10)
+      .attr("y", yloc + 116)
+      .attr("text-anchor", "left")
+      .attr("font-size", "12pt")
+      .attr("font-family", "cursive")
+      .text("Academy Award Wins (opacity)");
+    svg.append("text")
+      .attr("x", xloc - 10)
+      .attr("y", yloc + 196)
+      .attr("text-anchor", "left")
+      .attr("font-size", "12pt")
+      .attr("font-family", "cursive")
+      .text("Budget in Millions (circle area)");
+  }
+
+  /* display text on hover for circles and chords */
+  function displayFieldSet(i, type) {
+    div2.style("opacity", .9)
+    var legend;
+    var fields = {};
+    if (type == "character") {
+      legend = words[i].key;
+      fields['Race'] = words[i].Race;
+      fields['Total Words in the Series'] = words[i].sum;
+      fields["Words in I " + movies[0].Name] = words[i].wordsList[0];
+      fields["Words in II " + movies[1].Name] = words[i].wordsList[1];
+      fields["Words in III " + movies[2].Name] = words[i].wordsList[2];
+    } else if (type == "movie") {
+      legend = movies[i].Name;
+      fields = {
+        'Runtime In Minutes': movies[i].runtime,
+        'Budget In Millions': movies[i].budget,
+        'Box Office Revenue In Millions': movies[i].boxRevenue,
+        'Academy Award Nominations': movies[i].nominations,
+        'Academy Award Wins': movies[i].wins,
+        'Rotten Tomatoes Score': movies[i].score,
+      };
+    } else return;
+    d3.select("fieldset").remove();
+    var fieldset = div2.append("fieldset");
+    fieldset.append("legend").html(legend);
+    for (var key in fields) {
+      fieldset.append("li")
+        .html("<strong>" + key + "</strong>: " + fields[key])
+        .style("color", function() {
+          if (key == 'Race') {
+            return color(fields[key]);
+          }
+          return "black";
+        });
+    }
+  }
+
+  /* display the small text on hover for each chord group */
+  function displayTooltip(i, opacity) {
+    var text = words[i].key;
+    div1.transition()
+      .duration(200)
+      .style("opacity", opacity);
+    div1.html(text)
+      .style("left", (d3.event.pageX) + "px")
+      .style("top", (d3.event.pageY - 28) + "px");
+  }
+
+  /* change chord opacity on hover for each chord */
+  function chordMouseover(d, i) {
+    d3.selectAll(".ribbons path")
+      .filter(function(e, index) {
+        return index != i;
+      })
+      .transition()
+      .style("opacity", 0.1);
+
+    d3.selectAll(".bubbles g")
+      .filter(function(e, index) {
+        return index != d.source.subindex;
+      })
+      .transition()
+      .style("opacity", 0.1);
+  }
+
+  /* remove hover effects */
+  function chordMouseout(d, i) {
+    d3.selectAll(".ribbons path")
+      .filter(function(e, index) {
+        return index != i;
+      })
+      .transition()
+      .style("opacity", 0.8);
+
+    d3.selectAll(".bubbles g")
+      .filter(function(e, index) {
+        return index != d.source.subindex;
+      })
+      .transition()
+      .style("opacity", 1);
+  }
+
+  /* change chord opacity on hover for each circle */
+  function circleMouseover(d, i) {
+    d3.selectAll(".ribbons path")
+      .filter(function(e, index) {
+        return e.source.subindex != i;
+      })
+      .transition()
+      .style("opacity", 0.1);
+
+    d3.selectAll(".bubbles g")
+      .filter(function(e, index) {
+        return index != i;
+      })
+      .transition()
+      .style("opacity", 0.1);
+  }
+
+  /* remove hover effects */
+  function circleMouseout(d, i) {
+    d3.selectAll(".ribbons path")
+      .filter(function(e, index) {
+        return e.source.subindex != i;
+      })
+      .transition()
+      .style("opacity", 0.8);
+
+    d3.selectAll(".bubbles g")
+      .filter(function(e, index) {
+        return index != i;
+      })
+      .transition()
+      .style("opacity", 1);
+  }
+
+  /* change chord opacity on hover for each group */
+  function groupMouseover(d, i) {
+    var movielist = [];
+    d3.selectAll(".ribbons path")
+      .filter(function(e, index) {
+        if (e.source.index == i && e.source.value > 0)
+          movielist.push(e.source.subindex);
+        return e.source.index != i;
+      })
+      .transition()
+      .style("opacity", 0.1);
+
+    d3.selectAll(".bubbles g")
+      .filter(function(e, index) {
+        console.log(movielist);
+        return movielist.indexOf(index) < 0;
+      })
+      .transition()
+      .style("opacity", 0.1);
+  }
+
+  /* remove hover effects */
+  function groupMouseout(d, i) {
+    var movielist = [];
+    d3.selectAll(".ribbons path")
+      .filter(function(e, index) {
+        if (e.source.index == i && e.source.value > 0)
+          movielist.push(e.source.subindex);
+        return e.source.index != i;
+      })
+      .transition()
+      .style("opacity", 0.8);
+
+    d3.selectAll(".bubbles g")
+      .filter(function(e, index) {
+        return movielist.indexOf(index) < 0;
+      })
+      .transition()
+      .style("opacity", 1);
+  }
+</script>
